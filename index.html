@@ -856,4 +856,989 @@
                         <div class="instruction-step">
                             <div class="step-number">1</div>
                             <p>Fill the grid so that every row, column, and 3x3 box contains the digits 1-9.</p>
-         
+                        </div>
+                        <div class="instruction-step">
+                            <div class="step-number">2</div>
+                            <p>No number can be repeated in any row, column, or 3x3 box.</p>
+                        </div>
+                        <div class="instruction-step">
+                            <div class="step-number">3</div>
+                            <p>Use the notes feature to mark possible numbers for a cell by toggling the Notes button.</p>
+                        </div>
+                        <div class="instruction-step">
+                            <div class="step-number">4</div>
+                            <p>Click the hint button if you get stuck. You have limited hints per game.</p>
+                        </div>
+                    </div>
+                    <!-- Killer Sudoku Instructions (Initially Hidden) -->
+                    <div id="killer_sudoku_instructions" class="instructions">
+                        <div class="instruction-step">
+                            <div class="step-number">1</div>
+                            <p>Follow all standard Sudoku rules (rows, columns, 3x3 boxes must contain 1-9 without repetition).</p>
+                        </div>
+                        <div class="instruction-step">
+                            <div class="step-number">2</div>
+                            <p>The grid is divided into "cages" by dashed lines. Each cage has a small number in its top-left corner.</p>
+                        </div>
+                        <div class="instruction-step">
+                            <div class="step-number">3</div>
+                            <p>The numbers in each cage must sum up to the small number in its corner.</p>
+                        </div>
+                        <div class="instruction-step">
+                            <div class="step-number">4</div>
+                            <p>Numbers cannot be repeated within a single cage, even if they are in different rows/columns/boxes.</p>
+                        </div>
+                        <div class="instruction-step">
+                            <div class="step-number">5</div>
+                            <p>Use the notes feature and hints as in classic Sudoku.</p>
+                        </div>
+                    </div>
+                </div>
+                <button id="close_how_to_play" class="modal-btn primary">Got it!</button>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script>
+        class Sudoku {
+            constructor(params) {
+                this.INIT = 0;
+                this.RUNNING = 1;
+                this.END = 2;
+                this.id = params.id || 'sudoku_container';
+                this.fixCellsNr = params.fixCellsNr || 30;
+                this.highlight = params.highlight || 1;
+                this.n = 3;
+                this.nn = this.n * this.n;
+                this.cellsNr = this.nn * this.nn;
+                this.hintsLeft = 3;
+                this.mode = params.mode || 'classic';
+                this.symbols = ['', '🏞️', '🏖️', '🏜️', '🏝️', '⛰️', '🌋', '🗻', '🏕️', '🏔️'];
+                if (this.fixCellsNr < 10) this.fixCellsNr = 10;
+                if (this.fixCellsNr > 70) this.fixCellsNr = 70;
+                this.cages = [];
+                this.cageMap = new Array(this.cellsNr).fill(-1);
+                this.init();
+                this.secondsElapsed = 0;
+                this.timerInterval = null;
+                this.musicEnabled = true;
+                this.soundEnabled = true;
+                this.difficulty = 'medium';
+                this.mistakes = 0;
+                this.maxMistakes = 5;
+            }
+
+            init() {
+                this.status = this.INIT;
+                this.cellsComplete = 0;
+                this.board = [];
+                this.boardSolution = [];
+                this.cell = null;
+                this.markNotes = false;
+                this.secondsElapsed = 0;
+                this.hintsLeft = 3;
+                this.mistakes = 0;
+                this.cages = [];
+                this.cageMap = new Array(this.cellsNr).fill(-1);
+
+                switch(this.difficulty) {
+                    case 'easy':
+                        this.fixCellsNr = 45;
+                        this.killerGivenNumbers = 15;
+                        this.maxMistakes = 5;
+                        break;
+                    case 'medium':
+                        this.fixCellsNr = 30;
+                        this.killerGivenNumbers = 5;
+                        this.maxMistakes = 3;
+                        break;
+                    case 'hard':
+                        this.fixCellsNr = 20;
+                        this.killerGivenNumbers = 0;
+                        this.maxMistakes = 0;
+                        break;
+                    default:
+                        this.fixCellsNr = 30;
+                        this.killerGivenNumbers = 5;
+                        this.maxMistakes = 5;
+                }
+
+                $('.max-mistakes').text(this.maxMistakes);
+                $('.mistakes').text('0');
+
+                if (this.mode === 'killer') {
+                    this.generateKillerSudokuBoard();
+                } else {
+                    this.board = this.boardGenerator(this.n, this.fixCellsNr);
+                }
+                return this;
+            }
+
+            setMode(mode) {
+                this.mode = mode;
+                this.drawBoard();
+                this.updateControls();
+                if (mode === 'symbol') {
+                    $('.game-container').addClass('symbol-ui');
+                    $('#mode_indicator').text('(Symbol Mode)');
+                } else if (mode === 'killer') {
+                    $('.game-container').removeClass('symbol-ui');
+                    $('#mode_indicator').text('(Killer Mode)');
+                } else {
+                    $('.game-container').removeClass('symbol-ui');
+                    $('#mode_indicator').text('(Classic Mode)');
+                }
+            }
+
+            updateControls() {
+                if (this.mode === 'symbol') {
+                    for (let i = 1; i <= 9; i++) {
+                        $(`.num-btn[data-value="${i}"]`).text(this.symbols[i]);
+                    }
+                    $('#symbol_legend').show();
+                } else {
+                    for (let i = 1; i <= 9; i++) {
+                        $(`.num-btn[data-value="${i}"]`).text(i);
+                    }
+                    $('#symbol_legend').hide();
+                }
+            }
+
+            timer() {
+                if (this.status === this.RUNNING) {
+                    this.secondsElapsed++;
+                    const minutes = Math.floor(this.secondsElapsed / 60);
+                    const seconds = this.secondsElapsed % 60;
+                    $('.time').text(`${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`);
+                }
+            }
+
+            shuffle(array) {
+                let currentIndex = array.length;
+                let temporaryValue, randomIndex;
+                while (0 !== currentIndex) {
+                    randomIndex = Math.floor(Math.random() * currentIndex);
+                    currentIndex -= 1;
+                    temporaryValue = array[currentIndex];
+                    array[currentIndex] = array[randomIndex];
+                    array[randomIndex] = temporaryValue;
+                }
+                return array;
+            }
+
+            boardGenerator(n, fixCellsNr) {
+                let matrix_fields = [];
+                let index = 0;
+                this.boardSolution = [];
+                for (let i = 0; i < this.nn; i++) {
+                    matrix_fields[i] = i + 1;
+                }
+                matrix_fields = this.shuffle(matrix_fields);
+                for (let i = 0; i < n * n; i++) {
+                    for (let j = 0; j < n * n; j++) {
+                        const value = Math.floor((i * n + i / n + j) % (n * n) + 1);
+                        this.boardSolution[index] = value;
+                        index++;
+                    }
+                }
+                const blank_indexes = [];
+                for (let i = 0; i < this.n; i++) {
+                    blank_indexes[i] = i + 1;
+                }
+                const bands_horizontal_indexes = this.shuffle(blank_indexes);
+                let board_solution_tmp = [];
+                index = 0;
+                for (let i = 0; i < bands_horizontal_indexes.length; i++) {
+                    const j_start = (bands_horizontal_indexes[i] - 1) * this.n * this.nn;
+                    const j_stop = bands_horizontal_indexes[i] * this.n * this.nn;
+                    for (let j = j_start; j < j_stop; j++) {
+                        board_solution_tmp[index] = this.boardSolution[j];
+                        index++;
+                    }
+                }
+                this.boardSolution = board_solution_tmp;
+                const bands_vertical_indexes = this.shuffle(blank_indexes);
+                board_solution_tmp = [];
+                index = 0;
+                for (let k = 0; k < this.nn; k++) {
+                    for (let i = 0; i < this.n; i++) {
+                        const j_start = (bands_vertical_indexes[i] - 1) * this.n;
+                        const j_stop = bands_vertical_indexes[i] * this.n;
+                        for (let j = j_start; j < j_stop; j++) {
+                            board_solution_tmp[index] = this.boardSolution[j + (k * this.nn)];
+                            index++;
+                        }
+                    }
+                }
+                this.boardSolution = board_solution_tmp;
+                const board_indexes = [];
+                const board_init = [];
+                for (let i = 0; i < this.boardSolution.length; i++) {
+                    board_indexes[i] = i;
+                    board_init[i] = 0;
+                }
+                const shuffledIndexes = this.shuffle(board_indexes);
+                const selectedIndexes = shuffledIndexes.slice(0, fixCellsNr);
+                for (let i = 0; i < selectedIndexes.length; i++) {
+                    board_init[selectedIndexes[i]] = this.boardSolution[selectedIndexes[i]];
+                    if (parseInt(board_init[selectedIndexes[i]])) {
+                        this.cellsComplete++;
+                    }
+                }
+                return board_init;
+            }
+
+            generateKillerSudokuBoard() {
+                this.boardGenerator(this.n, 81);
+                this.board = new Array(this.cellsNr).fill(0);
+                this.cages = [];
+                this.cageMap = new Array(this.cellsNr).fill(-1);
+                let cageIdCounter = 0;
+                let cellsToAssign = Array.from({ length: this.cellsNr }, (_, i) => i);
+                this.shuffle(cellsToAssign);
+                while (cellsToAssign.length > 0) {
+                    const startCellIdx = cellsToAssign.pop();
+                    if (this.cageMap[startCellIdx] !== -1) continue;
+                    cageIdCounter++;
+                    let currentCageCells = [startCellIdx];
+                    this.cageMap[startCellIdx] = cageIdCounter;
+                    let currentCageSum = this.boardSolution[startCellIdx];
+                    const minCageSize = 2;
+                    const maxCageSize = Math.min(5, cellsToAssign.length + 1);
+                    const targetCageSize = Math.floor(Math.random() * (maxCageSize - minCageSize + 1)) + minCageSize;
+                    let attempts = 0;
+                    while (currentCageCells.length < targetCageSize && attempts < 20) {
+                        attempts++;
+                        const lastCellInCage = currentCageCells[currentCageCells.length - 1];
+                        const neighbors = this.getNeighbors(lastCellInCage);
+                        this.shuffle(neighbors);
+                        let addedToCage = false;
+                        for (const neighborIdx of neighbors) {
+                            if (this.cageMap[neighborIdx] === -1) {
+                                const tempCageValues = currentCageCells.map(idx => this.boardSolution[idx]).concat(this.boardSolution[neighborIdx]);
+                                if (new Set(tempCageValues).size === tempCageValues.length) {
+                                    currentCageCells.push(neighborIdx);
+                                    this.cageMap[neighborIdx] = cageIdCounter;
+                                    currentCageSum += this.boardSolution[neighborIdx];
+                                    cellsToAssign = cellsToAssign.filter(idx => idx !== neighborIdx);
+                                    addedToCage = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!addedToCage && currentCageCells.length < targetCageSize) {
+                            this.shuffle(currentCageCells);
+                        }
+                    }
+                    this.cages.push({ id: cageIdCounter, sum: currentCageSum, cells: currentCageCells });
+                }
+                for(let i = 0; i < this.cellsNr; i++) {
+                    if(this.cageMap[i] === -1) {
+                        cageIdCounter++;
+                        this.cages.push({ id: cageIdCounter, sum: this.boardSolution[i], cells: [i] });
+                        this.cageMap[i] = cageIdCounter;
+                    }
+                }
+                this.cages.sort((a, b) => Math.min(...a.cells) - Math.min(...b.cells));
+                if (this.killerGivenNumbers > 0) {
+                    const allCellIndices = Array.from({ length: this.cellsNr }, (_, i) => i);
+                    this.shuffle(allCellIndices);
+                    let cellsFilled = 0;
+                    for (const idx of allCellIndices) {
+                        if (cellsFilled >= this.killerGivenNumbers) break;
+                        const cageId = this.cageMap[idx];
+                        const cage = this.cages.find(c => c.id === cageId);
+                        if (cage) {
+                            const currentCageValues = cage.cells.map(cIdx => this.board[cIdx]).filter(val => val !== 0);
+                            if (!currentCageValues.includes(this.boardSolution[idx])) {
+                                this.board[idx] = this.boardSolution[idx];
+                                cellsFilled++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            getNeighbors(idx) {
+                const neighbors = [];
+                const row = Math.floor(idx / this.nn);
+                const col = idx % this.nn;
+                if (row > 0) neighbors.push(idx - this.nn);
+                if (row < this.nn - 1) neighbors.push(idx + this.nn);
+                if (col > 0) neighbors.push(idx - 1);
+                if (col < this.nn - 1) neighbors.push(idx + 1);
+                return neighbors;
+            }
+
+            drawBoard() {
+                let index = 0;
+                const sudoku_board = $('<div></div>').addClass('sudoku_board');
+                $('#' + this.id).empty();
+                for (let i = 0; i < this.nn; i++) {
+                    for (let j = 0; j < this.nn; j++) {
+                        const position = { x: i + 1, y: j + 1 };
+                        const group_position = { x: Math.floor((position.x - 1) / this.n), y: Math.floor((position.y - 1) / this.n) };
+                        let displayValue = '';
+                        if (this.board[index] > 0) {
+                            if (this.mode === 'symbol') {
+                                displayValue = this.symbols[this.board[index]];
+                            } else {
+                                displayValue = this.board[index];
+                            }
+                        }
+                        const cell = $('<div></div>')
+                            .addClass('cell')
+                            .attr('data-x', position.x)
+                            .attr('data-y', position.y)
+                            .attr('data-idx', index)
+                            .attr('data-gr', group_position.x + '' + group_position.y)
+                            .html('<span>' + displayValue + '</span>');
+                        if (this.board[index] > 0) {
+                            cell.addClass('fix');
+                        }
+                        if (position.x % this.n === 0 && position.x != this.nn) {
+                            cell.addClass('border_h');
+                        }
+                        if (position.y % this.n === 0 && position.y != this.nn) {
+                            cell.addClass('border_v');
+                        }
+                        if (this.mode === 'killer') {
+                            const currentCellIndex = index;
+                            const cageId = this.cageMap[currentCellIndex];
+                            const cage = this.cages.find(c => c.id === cageId);
+                            if (cage) {
+                                const minIdxInCage = Math.min(...cage.cells);
+                                if (currentCellIndex === minIdxInCage) {
+                                    cell.append(`<div class="cage-sum">${cage.sum}</div>`);
+                                }
+                                const row = Math.floor(currentCellIndex / this.nn);
+                                const col = currentCellIndex % this.nn;
+                                if (row === 0 || this.cageMap[currentCellIndex - this.nn] !== cageId) {
+                                    cell.addClass('cage-border-top');
+                                }
+                                if (row === this.nn - 1 || this.cageMap[currentCellIndex + this.nn] !== cageId) {
+                                    cell.addClass('cage-border-bottom');
+                                }
+                                if (col === 0 || this.cageMap[currentCellIndex - 1] !== cageId) {
+                                    cell.addClass('cage-border-left');
+                                }
+                                if (col === this.nn - 1 || this.cageMap[currentCellIndex + 1] !== cageId) {
+                                    cell.addClass('cage-border-right');
+                                }
+                            }
+                        }
+                        cell.appendTo(sudoku_board);
+                        index++;
+                    }
+                }
+                sudoku_board.appendTo('#' + this.id);
+                this.cellsComplete = $(`#${this.id} .sudoku_board .cell span:not(:empty)`).length;
+                $('.cells_complete').text(this.cellsComplete + '/' + this.cellsNr);
+                $('.hints').text(this.hintsLeft);
+                this.resizeWindow();
+            }
+
+            resizeWindow() {
+                const boardWidth = $('#' + this.id + ' .sudoku_board').width();
+                const cellWidth = boardWidth / 9;
+                $('#' + this.id + ' .sudoku_board .cell').css({
+                    'width': cellWidth + 'px',
+                    'height': cellWidth + 'px',
+                    'line-height': cellWidth + 'px'
+                });
+                $('#' + this.id + ' .sudoku_board .cell span').css('line-height', cellWidth + 'px');
+                const noteSize = cellWidth / 3 - 2;
+                $('#' + this.id + ' .sudoku_board .cell .note').css({
+                    'width': noteSize + 'px',
+                    'height': noteSize + 'px',
+                    'line-height': noteSize + 'px',
+                    'font-size': noteSize * 0.6 + 'px'
+                });
+            }
+
+            cellSelect(cell) {
+                this.cell = cell;
+                const value = parseInt($(cell).find('span').text()) || 0;
+                const position = { x: parseInt($(cell).attr('data-x')), y: parseInt($(cell).attr('data-y')) };
+                const group_position = { x: Math.floor((position.x - 1) / this.n), y: Math.floor((position.y - 1) / this.n) };
+                const horizontal_cells = $(`#${this.id} .sudoku_board .cell[data-x="${position.x}"]`);
+                const vertical_cells = $(`#${this.id} .sudoku_board .cell[data-y="${position.y}"]`);
+                const group_cells = $(`#${this.id} .sudoku_board .cell[data-gr="${group_position.x}${group_position.y}"]`);
+                $(`#${this.id} .sudoku_board .cell`).removeClass('selected current group cage-highlight');
+                $(`#${this.id} .sudoku_board .cell span`).removeClass('samevalue');
+                $(cell).addClass('selected current');
+                if (this.highlight > 0 && value > 0) {
+                    $(`#${this.id} .sudoku_board .cell span`).filter(function() {
+                        return parseInt($(this).text()) === value;
+                    }).not($(cell).find('span')).addClass('samevalue');
+                }
+                if (this.highlight > 0) {
+                    horizontal_cells.addClass('selected');
+                    vertical_cells.addClass('selected');
+                    group_cells.addClass('selected group');
+                }
+                if (this.mode === 'killer') {
+                    const currentCellIndex = parseInt($(cell).attr('data-idx'));
+                    const cageId = this.cageMap[currentCellIndex];
+                    const cage = this.cages.find(c => c.id === cageId);
+                    if (cage) {
+                        cage.cells.forEach(idx => {
+                            $(`#${this.id} .sudoku_board .cell[data-idx="${idx}"]`).addClass('selected cage-highlight');
+                        });
+                    }
+                }
+            }
+
+            addValue(value) {
+                if (!this.cell || $(this.cell).hasClass('fix')) {
+                    return this;
+                }
+                const currentCellIndex = parseInt($(this.cell).attr('data-idx'));
+                this.board[currentCellIndex] = value;
+                let displayVal = '';
+                if (value !== 0) {
+                    if (this.mode === 'symbol') {
+                        displayVal = this.symbols[value];
+                    } else {
+                        displayVal = value;
+                    }
+                }
+                $(this.cell).find('span').text(displayVal);
+                $(this.cell).find('.note').remove();
+                this.revalidateBoard();
+                this.cellsComplete = $(`#${this.id} .sudoku_board .cell span:not(:empty)`).length;
+                $('.cells_complete').text(`${this.cellsComplete}/${this.cellsNr}`);
+                if (this.cellsComplete === this.cellsNr && this.isBoardValid()) {
+                    this.gameOver(true);
+                }
+                return this;
+            }
+
+            addNote(value) {
+                if (!this.cell || $(this.cell).hasClass('fix') || $(this.cell).find('span').text() !== '') {
+                    return this;
+                }
+                const oldNotes = $(this.cell).find('.note');
+                if (oldNotes.length < 9 && !$(this.cell).find(`.note:contains(${value})`).length) {
+                    const noteSize = $(this.cell).width() / 3 - 2;
+                    const noteContent = this.mode === 'symbol' ? this.symbols[value] : value;
+                    $('<div></div>')
+                        .addClass('note')
+                        .css({
+                            'line-height': noteSize + 'px',
+                            'height': noteSize + 'px',
+                            'width': noteSize + 'px',
+                            'font-size': noteSize * 0.6 + 'px'
+                        })
+                        .text(noteContent)
+                        .appendTo(this.cell);
+                }
+                return this;
+            }
+
+            removeNote(value) {
+                if (!this.cell) return this;
+                if (value === 0) {
+                    $(this.cell).find('.note').remove();
+                } else {
+                    const noteContent = this.mode === 'symbol' ? this.symbols[value] : value;
+                    $(this.cell).find(`.note:contains(${noteContent})`).remove();
+                }
+                return this;
+            }
+
+            revalidateBoard() {
+                $(`#${this.id} .sudoku_board .cell`).removeClass('notvalid');
+                
+                let newMistakes = 0;
+                let mistakeCells = [];
+                
+                for (let i = 0; i < this.cellsNr; i++) {
+                    const cellElement = $(`#${this.id} .sudoku_board .cell[data-idx="${i}"]`);
+                    const value = this.board[i];
+                    if (value === 0) continue;
+                    
+                    const row = Math.floor(i / this.nn);
+                    const col = i % this.nn;
+                    const group_row = Math.floor(row / this.n);
+                    const group_col = Math.floor(col / this.n);
+                    
+                    let cellIsInvalid = false;
+                    
+                    // Check row for duplicates
+                    for (let j = 0; j < this.nn; j++) {
+                        const otherIdx = row * this.nn + j;
+                        if (otherIdx !== i && this.board[otherIdx] === value) {
+                            cellIsInvalid = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!cellIsInvalid) {
+                        // Check column for duplicates
+                        for (let j = 0; j < this.nn; j++) {
+                            const otherIdx = j * this.nn + col;
+                            if (otherIdx !== i && this.board[otherIdx] === value) {
+                                cellIsInvalid = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (!cellIsInvalid) {
+                        // Check 3x3 group for duplicates
+                        const startRow = group_row * this.n;
+                        const startCol = group_col * this.n;
+                        for (let r = 0; r < this.n; r++) {
+                            for (let c = 0; c < this.n; c++) {
+                                const otherIdx = (startRow + r) * this.nn + (startCol + c);
+                                if (otherIdx !== i && this.board[otherIdx] === value) {
+                                    cellIsInvalid = true;
+                                    break;
+                                }
+                            }
+                            if (cellIsInvalid) break;
+                        }
+                    }
+                    
+                    if (!cellIsInvalid && this.mode === 'killer') {
+                        const cageId = this.cageMap[i];
+                        const cage = this.cages.find(c => c.id === cageId);
+                        if (cage) {
+                            let currentCageSum = 0;
+                            const cageCellValues = [];
+                            let hasEmptyCellsInCage = false;
+                            
+                            cage.cells.forEach(idx => {
+                                const val = this.board[idx];
+                                if (val !== 0) {
+                                    currentCageSum += val;
+                                    cageCellValues.push(val);
+                                } else {
+                                    hasEmptyCellsInCage = true;
+                                }
+                            });
+                            
+                            if (new Set(cageCellValues).size !== cageCellValues.length) {
+                                cellIsInvalid = true;
+                            }
+                            
+                            if (!hasEmptyCellsInCage && currentCageSum !== cage.sum) {
+                                cellIsInvalid = true;
+                            }
+                        }
+                    }
+                    
+                    if (cellIsInvalid) {
+                        cellElement.addClass('notvalid');
+                        mistakeCells.push(i);
+                    }
+                }
+                
+                // Only count the current cell if it's invalid
+                if (this.cell) {
+                    const currentCellIdx = parseInt($(this.cell).attr('data-idx'));
+                    if (mistakeCells.includes(currentCellIdx)) {
+                        newMistakes = 1;
+                    }
+                }
+                
+                if (newMistakes > 0) {
+                    this.mistakes += newMistakes;
+                    $('.mistakes').text(this.mistakes);
+                    
+                    if (this.maxMistakes === 0 && this.mistakes > 0) {
+                        this.gameOver(false);
+                    } else if (this.maxMistakes > 0 && this.mistakes >= this.maxMistakes) {
+                        this.gameOver(false);
+                    }
+                }
+                
+                return this;
+            }
+
+            isBoardValid() {
+                if ($(`#${this.id} .sudoku_board .cell.notvalid`).length > 0) {
+                    return false;
+                }
+                if (this.cellsComplete !== this.cellsNr) {
+                    return false;
+                }
+                for (let i = 0; i < this.cellsNr; i++) {
+                    const value = this.board[i];
+                    const row = Math.floor(i / this.nn);
+                    const col = i % this.nn;
+                    const group_row = Math.floor(row / this.n);
+                    const group_col = Math.floor(col / this.n);
+                    
+                    const rowValues = [];
+                    for (let j = 0; j < this.nn; j++) {
+                        rowValues.push(this.board[row * this.nn + j]);
+                    }
+                    if (new Set(rowValues.filter(v => v !== 0)).size !== rowValues.filter(v => v !== 0).length) return false;
+                    
+                    const colValues = [];
+                    for (let j = 0; j < this.nn; j++) {
+                        colValues.push(this.board[j * this.nn + col]);
+                    }
+                    if (new Set(colValues.filter(v => v !== 0)).size !== colValues.filter(v => v !== 0).length) return false;
+                    
+                    const groupValues = [];
+                    const startRow = group_row * this.n;
+                    const startCol = group_col * this.n;
+                    for (let r = 0; r < this.n; r++) {
+                        for (let c = 0; c < this.n; c++) {
+                            groupValues.push(this.board[(startRow + r) * this.nn + (startCol + c)]);
+                        }
+                    }
+                    if (new Set(groupValues.filter(v => v !== 0)).size !== groupValues.filter(v => v !== 0).length) return false;
+                    
+                    if (this.mode === 'killer') {
+                        const cageId = this.cageMap[i];
+                        const cage = this.cages.find(c => c.id === cageId);
+                        if (cage) {
+                            let currentCageSum = 0;
+                            const cageCellValues = [];
+                            cage.cells.forEach(idx => {
+                                currentCageSum += this.board[idx];
+                                cageCellValues.push(this.board[idx]);
+                            });
+                            if (new Set(cageCellValues.filter(v => v !== 0)).size !== cageCellValues.filter(v => v !== 0).length) return false;
+                            if (currentCageSum !== cage.sum) return false;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            useHint() {
+                if (this.hintsLeft <= 0 || !this.cell || $(this.cell).hasClass('fix') || $(this.cell).find('span').text() !== '') {
+                    return;
+                }
+                const index = parseInt($(this.cell).attr('data-idx'));
+                const solution = this.boardSolution[index];
+                if (solution) {
+                    this.addValue(solution);
+                    this.hintsLeft--;
+                    $('.hints').text(this.hintsLeft);
+                }
+            }
+
+            gameOver(isWin = true) {
+                this.status = this.END;
+                clearInterval(this.timerInterval);
+                
+                const minutes = Math.floor(this.secondsElapsed / 60);
+                const seconds = this.secondsElapsed % 60;
+                const finalTimeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                
+                if (isWin) {
+                    updateLeaderboard(finalTimeStr, this.mode, this.difficulty);
+                }
+                
+                const gameOverModal = $('#game_over_modal');
+                gameOverModal.find('h2').text(isWin ? 'Congratulations!' : 'Game Over');
+                gameOverModal.find('p').text(isWin ? 
+                    `You've completed the puzzle in ${finalTimeStr}` : 
+                    `You made too many mistakes (${this.mistakes}/${this.maxMistakes})`);
+                
+                const gameOverLeaderboardList = $('#game_over_modal #leaderboard_list');
+                gameOverLeaderboardList.empty();
+                
+                if (isWin) {
+                    const currentDifficultyLeaderboard = JSON.parse(localStorage.getItem(`sudoku_leaderboard_${this.mode}_${this.difficulty}`)) || [];
+                    currentDifficultyLeaderboard.forEach((time, idx) => {
+                        const scoreClass = (time === '00:00') ? 'placeholder-score' : '';
+                        gameOverLeaderboardList.append(`<li class="${scoreClass}"><strong>#${idx + 1}</strong> <span>${time}</span></li>`);
+                    });
+                } else {
+                    gameOverLeaderboardList.append('<li>Complete the puzzle to see your time on the leaderboard!</li>');
+                }
+                
+                $('.final-time').text(finalTimeStr);
+                gameOverModal.addClass('open');
+            }
+
+            run() {
+                this.status = this.RUNNING;
+                this.secondsElapsed = 0;
+                this.drawBoard();
+                this.updateControls();
+                this.revalidateBoard();
+                clearInterval(this.timerInterval);
+                this.timerInterval = setInterval(() => this.timer(), 1000);
+            }
+        }
+
+        function initializeLeaderboards() {
+            const difficulties = ['easy', 'medium', 'hard'];
+            const modes = ['classic', 'symbol', 'killer'];
+            modes.forEach(mode => {
+                difficulties.forEach(difficulty => {
+                    const key = `sudoku_leaderboard_${mode}_${difficulty}`;
+                    let leaderboard = JSON.parse(localStorage.getItem(key));
+                    if (!leaderboard || leaderboard.length === 0) {
+                        leaderboard = Array(5).fill('00:00');
+                        localStorage.setItem(key, JSON.stringify(leaderboard));
+                    }
+                });
+            });
+        }
+
+        function timeToSeconds(timeStr) {
+            const parts = timeStr.split(':');
+            return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+        }
+
+        function secondsToTime(totalSeconds) {
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function updateLeaderboard(newTimeStr, mode, difficulty) {
+            const key = `sudoku_leaderboard_${mode}_${difficulty}`;
+            let leaderboard = JSON.parse(localStorage.getItem(key)) || [];
+            
+            let realScoresInSeconds = leaderboard
+                .filter(score => score !== '00:00')
+                .map(timeToSeconds);
+            
+            const newScoreInSeconds = timeToSeconds(newTimeStr);
+            realScoresInSeconds.push(newScoreInSeconds);
+            
+            realScoresInSeconds.sort((a, b) => a - b);
+            
+            let top5RealScores = realScoresInSeconds.slice(0, 5);
+            
+            let updatedLeaderboard = top5RealScores.map(secondsToTime);
+            
+            while (updatedLeaderboard.length < 5) {
+                updatedLeaderboard.push('00:00');
+            }
+            
+            updatedLeaderboard.sort((a, b) => {
+                const valA = (a === '00:00') ? Infinity : timeToSeconds(a);
+                const valB = (b === '00:00') ? Infinity : timeToSeconds(b);
+                return valA - valB;
+            });
+            
+            localStorage.setItem(key, JSON.stringify(updatedLeaderboard));
+            return updatedLeaderboard;
+        }
+
+        function showLeaderboard(mode, difficulty) {
+            const key = `sudoku_leaderboard_${mode}_${difficulty}`;
+            const leaderboard = JSON.parse(localStorage.getItem(key)) || [];
+            
+            const list = $(`#leaderboard_modal #${mode}_${difficulty}_list`);
+            list.empty();
+            
+            if (leaderboard.length === 0) {
+                list.append('<li>No scores yet.</li>');
+            } else {
+                leaderboard.forEach((time, idx) => {
+                    const scoreClass = (time === '00:00') ? 'placeholder-score' : '';
+                    list.append(`<li class="${scoreClass}"><strong>#${idx + 1}</strong> <span>${time}</span></li>`);
+                });
+            }
+        }
+
+        function showFullLeaderboard(currentMode) {
+            initializeLeaderboards();
+            const difficulties = ['easy', 'medium', 'hard'];
+            const allModes = ['classic', 'symbol', 'killer'];
+            
+            const modalContent = $('#leaderboard_modal .modal-content');
+            modalContent.empty();
+            modalContent.append('<h2>🏆 Leaderboard</h2>');
+            
+            const modesToDisplay = allModes.filter(mode => mode === currentMode);
+            
+            modesToDisplay.forEach(mode => {
+                modalContent.append(`<h3>${mode.charAt(0).toUpperCase() + mode.slice(1)} Sudoku</h3>`);
+                
+                difficulties.forEach(difficulty => {
+                    const listId = `${mode}_${difficulty}_list`;
+                    const sectionTitle = `${difficulty.charAt(0).toUpperCase() + difficulty.slice(1)}`;
+                    
+                    modalContent.append(`
+                        <div>
+                            <h4>${sectionTitle}</h4>
+                            <ul id="${listId}" class="leaderboard-list"></ul>
+                        </div>
+                    `);
+                    
+                    showLeaderboard(mode, difficulty);
+                });
+            });
+            
+            modalContent.append('<button id="close_leaderboard" class="modal-btn primary">Close</button>');
+            
+            $('#close_leaderboard').on('click', function() {
+                $('#leaderboard_modal').removeClass('open');
+            });
+            
+            $('#leaderboard_modal').addClass('open');
+        }
+
+        $(document).ready(function() {
+            let game;
+            let selectedMode = 'classic';
+            
+            initializeLeaderboards();
+            
+            $('#startup_screen').show();
+            $('.game-container').hide();
+            $('#symbol_legend').hide();
+            
+            $('#start_classic_btn').on('click', () => {
+                selectedMode = 'classic';
+                $('#difficulty_modal').addClass('open');
+            });
+            
+            $('.difficulty-btn-modal').on('click', function () {
+                const level = $(this).data('level');
+                $('#difficulty_modal').removeClass('open');
+                
+                const isInitial = !game;
+                if (isInitial) {
+                    $('#startup_screen').hide();
+                    $('.game-container').show();
+                    game = new Sudoku({
+                        id: 'sudoku_container',
+                        highlight: 1,
+                        mode: selectedMode
+                    });
+                }
+                
+                game.difficulty = level;
+                game.setMode(selectedMode);
+                game.init().run();
+            });
+            
+            $('#close_difficulty').on('click', () => {
+                $('#difficulty_modal').removeClass('open');
+            });
+            
+            $('#game_modes_btn').on('click', () => {
+                $('#game_modes_modal').addClass('open');
+            });
+            
+            $('.game-mode-btn').on('click', function() {
+                const mode = $(this).data('mode');
+                $('#game_modes_modal').removeClass('open');
+                selectedMode = mode;
+                $('#difficulty_modal').addClass('open');
+            });
+            
+            $('#close_game_modes').on('click', () => {
+                $('#game_modes_modal').removeClass('open');
+            });
+            
+            $('#menu_toggle').on('click', () => $('#side_menu').addClass('open'));
+            $('#close_menu').on('click', () => $('#side_menu').removeClass('open'));
+            
+            $('#home_btn').on('click', function () {
+                $('.game-container').hide();
+                $('#sudoku_container').empty();
+                $('#side_menu').removeClass('open');
+                $('#startup_screen').show();
+                if (game) {
+                    clearInterval(game.timerInterval);
+                    game = null;
+                }
+            });
+            
+            $('#restart_game_btn').on('click', function() {
+                $('#side_menu').removeClass('open');
+                if (game) {
+                    game.init().run();
+                }
+            });
+            
+            $('#change_difficulty_btn').on('click', function() {
+                $('#side_menu').removeClass('open');
+                $('#difficulty_modal').addClass('open');
+            });
+            
+            $('#help_btn, #how_to_play_btn').on('click', () => {
+                $('.instructions').removeClass('active');
+                if (game && game.mode === 'killer') {
+                    $('#killer_sudoku_instructions').addClass('active');
+                } else {
+                    $('#classic_sudoku_instructions').addClass('active');
+                }
+                $('#how_to_play_modal').addClass('open');
+            });
+            
+            $('#close_how_to_play').on('click', () => $('#how_to_play_modal').removeClass('open'));
+            
+            $('#view_leaderboard_btn, #view_leaderboard_btn_header').on('click', function() {
+                $('#side_menu').removeClass('open');
+                const modeToShow = game ? game.mode : selectedMode;
+                showFullLeaderboard(modeToShow);
+            });
+            
+            $('#play_again_btn').on('click', function() {
+                $('#game_over_modal').removeClass('open');
+                if (game) {
+                    game.init().run();
+                }
+            });
+            
+            $('#new_game_modal_btn').on('click', function() {
+                $('#game_over_modal').removeClass('open');
+                $('#startup_screen').show();
+                $('.game-container').hide();
+                $('#sudoku_container').empty();
+                if (game) {
+                    clearInterval(game.timerInterval);
+                    game = null;
+                }
+            });
+            
+            $('#note_toggle').on('click', function() {
+                if (game) {
+                    game.markNotes = !game.markNotes;
+                    $(this).toggleClass('active');
+                }
+            });
+            
+            $('#hint_btn').on('click', () => {
+                if (game) game.useHint();
+            });
+            
+            $('.num-btn').on('click', function() {
+                if (!game) return;
+                const val = parseInt($(this).data('value')) || 0;
+                if (game.markNotes) {
+                    if ($(this).hasClass('active')) {
+                        game.removeNote(val);
+                        $(this).removeClass('active');
+                    } else {
+                        game.addNote(val);
+                        $(this).addClass('active');
+                    }
+                } else {
+                    game.addValue(val);
+                }
+            });
+            
+            $('#sudoku_container').on('click', '.cell', function() {
+                if (game) game.cellSelect(this);
+            });
+            
+            $('#symbol_legend').on('click', '.legend-item', function() {
+                if (!game) return;
+                const value = parseInt($(this).data('value'));
+                if (game.markNotes) {
+                    game.addNote(value);
+                } else {
+                    game.addValue(value);
+                }
+            });
+        });
+    </script>
+</body>
+</html>
